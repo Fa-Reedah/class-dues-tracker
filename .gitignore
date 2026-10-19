@@ -14,3 +14,5 @@ bank_real*.pdf
 Thumbs.db
 .vscode/
 .idea/
+students*.csv
+class_list*.csv
