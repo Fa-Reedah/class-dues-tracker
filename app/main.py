@@ -3,8 +3,9 @@ import io
 from contextlib import asynccontextmanager
 
 from decimal import Decimal
+from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, func, select
 
@@ -16,6 +17,10 @@ from app.models.import_batch import ImportBatch
 from app.models.payment import Payment, PaymentCreate, PaymentUpdate
 from app.models.student import Student, StudentUpdate
 from app.parsers.bank_csv import parse_bank_csv_text
+
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB — bank statements are far smaller
+ALLOWED_EXTENSIONS = {".csv"}
+ALLOWED_CONTENT_TYPES = {"text/csv", "application/vnd.ms-excel", "text/plain", "application/octet-stream"}
 
 
 @asynccontextmanager
@@ -261,15 +266,43 @@ def delete_payment(payment_id: int, session: Session = Depends(get_session)):
 
 @app.post("/bank_rows/import")
 async def import_bank_rows(
-    file: UploadFile = File(...), session: Session = Depends(get_session)
+    request: Request,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
 ):
-    raw = await file.read()
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    if Path(file.filename).suffix.lower() not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="only .csv files are accepted")
+
+    if file.content_type is not None and file.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=415, detail="unsupported content type")
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_UPLOAD_BYTES + 1024:
+                raise HTTPException(status_code=413, detail="file too large (max 5 MB)")
+        except ValueError:
+            pass
+
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="file too large (max 5 MB)")
+
+    if len(raw) == 0:
+        raise HTTPException(status_code=400, detail="file is empty")
+
+    if b"\x00" in raw[:1024]:
+        raise HTTPException(status_code=400, detail="file does not look like a text CSV")
+
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
         raise HTTPException(status_code=400, detail="File must be UTF-8 CSV")
 
-    batch = ImportBatch(filename=file.filename or "")
+    batch = ImportBatch(filename=file.filename)
     session.add(batch)
     session.commit()
     session.refresh(batch)

@@ -121,3 +121,62 @@ def test_bank_rows_filter_by_batch(client):
     r2 = client.get("/bank_rows?batch_id=999")
     assert r2.status_code == 200
     assert len(r2.json()) == 0
+
+
+def test_import_rejects_missing_file(client):
+    r = client.post("/bank_rows/import")
+    assert r.status_code == 422
+
+
+def test_import_rejects_wrong_extension(client):
+    r = client.post(
+        "/bank_rows/import",
+        files={"file": ("bank.pdf", b"a\tb\tc\n", "text/csv")},
+    )
+    assert r.status_code == 415
+    assert "csv" in r.json()["detail"].lower()
+
+
+def test_import_rejects_wrong_content_type(client):
+    r = client.post(
+        "/bank_rows/import",
+        files={"file": ("bank.csv", b"a\tb\tc\n", "application/pdf")},
+    )
+    assert r.status_code == 415
+
+
+def test_import_rejects_oversized_file(client):
+    payload = b"a" * (5 * 1024 * 1024 + 100)
+    r = client.post(
+        "/bank_rows/import",
+        files={"file": ("bank.csv", payload, "text/csv")},
+    )
+    assert r.status_code == 413
+
+
+def test_import_rejects_empty_file(client):
+    r = client.post(
+        "/bank_rows/import",
+        files={"file": ("bank.csv", b"", "text/csv")},
+    )
+    assert r.status_code == 400
+
+
+def test_import_rejects_binary_content(client):
+    r = client.post(
+        "/bank_rows/import",
+        files={"file": ("bank.csv", b"\x00\x01\x02binary", "text/csv")},
+    )
+    assert r.status_code == 400
+    assert "text" in r.json()["detail"].lower()
+
+
+def test_import_accepts_valid_csv_unchanged(client):
+    with FIXTURE.open("rb") as f:
+        r = client.post(
+            "/bank_rows/import",
+            files={"file": ("bank_sample.csv", f, "text/csv")},
+        )
+    assert r.status_code == 200
+    assert r.json()["created"] == 4
+
