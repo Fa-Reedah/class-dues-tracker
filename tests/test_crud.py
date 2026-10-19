@@ -129,3 +129,24 @@ def test_student_duplicate_matric_returns_409(client):
     assert r2.status_code == 409
     assert "detail" in r2.json()
 
+
+def test_dues_period_rejects_non_positive_amount(client):
+    r1 = client.post(
+        "/dues_periods",
+        json={"name": "Zero", "amount": "0", "deadline": "2026-12-31"},
+    )
+    assert r1.status_code == 422
+
+    r2 = client.post(
+        "/dues_periods",
+        json={"name": "Neg", "amount": "-100", "deadline": "2026-12-31"},
+    )
+    assert r2.status_code == 422
+
+    r3 = client.post(
+        "/dues_periods",
+        json={"name": "Valid", "amount": "5000.00", "deadline": "2026-12-31"},
+    )
+    assert r3.status_code == 201
+
+

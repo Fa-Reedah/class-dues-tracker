@@ -16,13 +16,13 @@ class DuesPeriod(SQLModel, table=True):
 
 class DuesPeriodCreate(SQLModel):
     name: str
-    amount: Decimal
+    amount: Decimal = Field(gt=0)
     deadline: date
     active: bool = True
 
 
 class DuesPeriodUpdate(SQLModel):
     name: str | None = None
-    amount: Decimal | None = None
+    amount: Decimal | None = Field(default=None, gt=0)
     deadline: date | None = None
     active: bool | None = None
