@@ -1,0 +1,16 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.db
+*.sqlite3
+.env
+bank_real*.csv
+bank_real*.xlsx
+bank_real*.pdf
+*.statement.csv
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
