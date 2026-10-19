@@ -13,7 +13,7 @@ engine = create_engine(
 
 
 def init_db() -> None:
-    from app.models import bank_row, dues_period, payment, student  # noqa: F401
+    from app.models import audit_log, bank_row, dues_period, import_batch, payment, student  # noqa: F401
 
     SQLModel.metadata.create_all(engine)
 

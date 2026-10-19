@@ -18,7 +18,7 @@ class Payment(SQLModel, table=True):
     bank: str | None = Field(default=None)
     source: str = Field(default="manual")
     status: str = Field(default="pending")
-    matched_bank_row_id: int | None = Field(default=None)
+    matched_bank_row_id: int | None = Field(default=None, unique=True)
     date_delta_days: int | None = Field(default=None)
     match_confidence: str | None = Field(default=None)
     match_reason: str | None = Field(default=None)

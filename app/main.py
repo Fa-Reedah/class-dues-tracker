@@ -2,15 +2,20 @@ import csv
 import io
 from contextlib import asynccontextmanager
 
+from decimal import Decimal
+
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, func, select
 
 from app.db import get_session, init_db
+from app.models.audit_log import AuditLog
 from app.models.bank_row import BankRow
 from app.models.dues_period import DuesPeriod, DuesPeriodCreate, DuesPeriodUpdate
+from app.models.import_batch import ImportBatch
 from app.models.payment import Payment, PaymentCreate, PaymentUpdate
 from app.models.student import Student, StudentUpdate
+from app.parsers.bank_csv import parse_bank_csv_text
 
 
 @asynccontextmanager
@@ -225,8 +230,20 @@ def update_payment(payment_id: int, payload: PaymentUpdate, session: Session = D
     payment = session.get(Payment, payment_id)
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
-    for key, value in _as_dict(payload).items():
+    old_status = payment.status
+    updates = _as_dict(payload)
+    for key, value in updates.items():
         setattr(payment, key, value)
+    if "status" in updates and old_status != payment.status:
+        log = AuditLog(
+            entity_type="payment",
+            entity_id=payment.id,
+            field="status",
+            old_value=old_status,
+            new_value=payment.status,
+            changed_by="rep",
+        )
+        session.add(log)
     session.add(payment)
     session.commit()
     session.refresh(payment)
@@ -240,3 +257,89 @@ def delete_payment(payment_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Payment not found")
     session.delete(payment)
     session.commit()
+
+
+@app.post("/bank_rows/import")
+async def import_bank_rows(
+    file: UploadFile = File(...), session: Session = Depends(get_session)
+):
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="File must be UTF-8 CSV")
+
+    batch = ImportBatch(filename=file.filename or "")
+    session.add(batch)
+    session.commit()
+    session.refresh(batch)
+
+    parsed_rows = parse_bank_csv_text(text, batch_id=batch.id)
+    created = 0
+    skipped = 0
+    total_credit = Decimal("0.00")
+
+    for row in parsed_rows:
+        existing = session.exec(
+            select(BankRow).where(BankRow.file_hash == row.file_hash)
+        ).first()
+        if existing:
+            skipped += 1
+            continue
+        session.add(row)
+        created += 1
+        total_credit += row.credit
+
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=400, detail="Integrity error importing bank rows")
+
+    batch.row_count = created
+    batch.total_credit = total_credit
+    session.add(batch)
+    session.commit()
+
+    return {"batch_id": batch.id, "created": created, "skipped": skipped, "errors": []}
+
+
+@app.get("/bank_import_batches", response_model=list[ImportBatch])
+def list_bank_import_batches(session: Session = Depends(get_session)):
+    return session.exec(select(ImportBatch)).all()
+
+
+@app.get("/bank_import_batches/{batch_id}", response_model=ImportBatch)
+def get_bank_import_batch(batch_id: int, session: Session = Depends(get_session)):
+    batch = session.get(ImportBatch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Import batch not found")
+    return batch
+
+
+@app.get("/bank_rows", response_model=list[BankRow])
+def list_bank_rows(
+    batch_id: int | None = None,
+    credit_min: Decimal | None = None,
+    session: Session = Depends(get_session),
+):
+    query = select(BankRow)
+    if batch_id is not None:
+        query = query.where(BankRow.batch_id == batch_id)
+    if credit_min is not None:
+        query = query.where(BankRow.credit >= credit_min)
+    return session.exec(query).all()
+
+
+@app.get("/audit_logs", response_model=list[AuditLog])
+def list_audit_logs(
+    entity_type: str | None = None,
+    entity_id: int | None = None,
+    session: Session = Depends(get_session),
+):
+    query = select(AuditLog)
+    if entity_type is not None:
+        query = query.where(AuditLog.entity_type == entity_type)
+    if entity_id is not None:
+        query = query.where(AuditLog.entity_id == entity_id)
+    return session.exec(query).all()

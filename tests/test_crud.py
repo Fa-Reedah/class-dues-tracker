@@ -1,11 +1,16 @@
+from datetime import date
+from decimal import Decimal
+
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 from app.db import get_session
 from app.main import app
-from app.models import bank_row, dues_period, payment, student  # noqa: F401
+from app.models import audit_log, bank_row, dues_period, import_batch, payment, student  # noqa: F401
+from app.models.payment import Payment
 
 
 @pytest.fixture
@@ -331,5 +336,144 @@ def test_payment_delete(client):
     )
     assert client.delete("/payments/1").status_code == 204
     assert client.get("/payments/1").status_code == 404
+
+
+def test_payment_patch_status_creates_audit_log(client):
+    client.post("/students", json={"name": "Ada", "matric": "M001"})
+    client.post(
+        "/dues_periods",
+        json={"name": "2026/27", "amount": "5000.00", "deadline": "2026-11-30"},
+    )
+    client.post(
+        "/payments",
+        json={
+            "student_id": 1,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+        },
+    )
+    r = client.patch("/payments/1", json={"status": "confirmed"})
+    assert r.status_code == 200
+
+    logs_res = client.get("/audit_logs")
+    assert logs_res.status_code == 200
+    logs = logs_res.json()
+    assert len(logs) == 1
+    assert logs[0]["entity_type"] == "payment"
+    assert logs[0]["entity_id"] == 1
+    assert logs[0]["field"] == "status"
+    assert logs[0]["old_value"] == "pending"
+    assert logs[0]["new_value"] == "confirmed"
+    assert logs[0]["changed_by"] == "rep"
+
+
+def test_payment_patch_same_status_no_audit_log(client):
+    client.post("/students", json={"name": "Ada", "matric": "M001"})
+    client.post(
+        "/dues_periods",
+        json={"name": "2026/27", "amount": "5000.00", "deadline": "2026-11-30"},
+    )
+    client.post(
+        "/payments",
+        json={
+            "student_id": 1,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+        },
+    )
+    r = client.patch("/payments/1", json={"status": "pending"})
+    assert r.status_code == 200
+
+    logs_res = client.get("/audit_logs")
+    assert len(logs_res.json()) == 0
+
+
+def test_payment_patch_amount_no_audit_log(client):
+    client.post("/students", json={"name": "Ada", "matric": "M001"})
+    client.post(
+        "/dues_periods",
+        json={"name": "2026/27", "amount": "5000.00", "deadline": "2026-11-30"},
+    )
+    client.post(
+        "/payments",
+        json={
+            "student_id": 1,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+        },
+    )
+    r = client.patch("/payments/1", json={"amount": "6000.00"})
+    assert r.status_code == 200
+
+    logs_res = client.get("/audit_logs")
+    assert len(logs_res.json()) == 0
+
+
+def test_payment_duplicate_matched_bank_row_id_fails():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        p1 = Payment(
+            student_id=1,
+            dues_period_id=1,
+            amount=Decimal("5000.00"),
+            date=date(2026, 10, 20),
+            matched_bank_row_id=10,
+        )
+        p2 = Payment(
+            student_id=1,
+            dues_period_id=1,
+            amount=Decimal("5000.00"),
+            date=date(2026, 10, 20),
+            matched_bank_row_id=10,
+        )
+        session.add(p1)
+        session.commit()
+        session.add(p2)
+        with pytest.raises(IntegrityError):
+            session.commit()
+    engine.dispose()
+
+
+def test_audit_logs_filter_by_entity(client):
+    client.post("/students", json={"name": "Ada", "matric": "M001"})
+    client.post(
+        "/dues_periods",
+        json={"name": "2026/27", "amount": "5000.00", "deadline": "2026-11-30"},
+    )
+    client.post(
+        "/payments",
+        json={
+            "student_id": 1,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+            "ref": "REF1",
+        },
+    )
+    client.post(
+        "/payments",
+        json={
+            "student_id": 1,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+            "ref": "REF2",
+        },
+    )
+    client.patch("/payments/1", json={"status": "confirmed"})
+    client.patch("/payments/2", json={"status": "confirmed"})
+
+    r = client.get("/audit_logs?entity_id=1")
+    assert r.status_code == 200
+    assert len(r.json()) == 1
+    assert r.json()[0]["entity_id"] == 1
 
 

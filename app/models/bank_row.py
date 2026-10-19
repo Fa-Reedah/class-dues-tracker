@@ -10,6 +10,7 @@ class BankRow(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
 
+    batch_id: int = Field(foreign_key="import_batch.id", index=True)
     trans_date: datetime = Field(sa_type=DateTime(timezone=False))
     value_date: date
     description: str

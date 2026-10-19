@@ -11,10 +11,12 @@ from app.db import get_session
 from app.main import app
 from app.models import payment  # noqa: F401
 from app.models.bank_row import BankRow
+from app.models.import_batch import ImportBatch
 
 
 def _make_row(suffix: str = "a") -> BankRow:
     return BankRow(
+        batch_id=1,
         trans_date=datetime(2026, 10, 20, 10, 0, 0),
         value_date=date(2026, 10, 20),
         description="Transfer from REDACTED",
@@ -33,6 +35,9 @@ def test_engine():
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
+    with Session(engine) as s:
+        s.add(ImportBatch(filename="test.csv"))
+        s.commit()
     yield engine
     SQLModel.metadata.drop_all(engine)
 
@@ -57,6 +62,9 @@ def file_engine(tmp_path):
         connect_args={"check_same_thread": False},
     )
     SQLModel.metadata.create_all(engine)
+    with Session(engine) as s:
+        s.add(ImportBatch(filename="test.csv"))
+        s.commit()
     yield engine
     engine.dispose()
 

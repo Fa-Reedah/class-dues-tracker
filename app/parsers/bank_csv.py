@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import io
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -48,30 +49,38 @@ def _row_hash(raw: dict, position: int) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
 
-def parse_bank_csv(path: Path | str) -> list[BankRow]:
-    path = Path(path)
+def _parse_reader(reader, batch_id: int) -> list[BankRow]:
     rows: list[BankRow] = []
+    for position, raw in enumerate(reader, start=1):
+        credit = _parse_money(raw["Credit(₦)"])
+        if credit is None:
+            continue
 
+        rows.append(
+            BankRow(
+                batch_id=batch_id,
+                trans_date=_parse_trans_date(raw["Trans. Date"]),
+                value_date=_parse_value_date(raw["Value Date"]),
+                description=raw["Description"].strip(),
+                debit=_parse_money(raw["Debit(₦)"]),
+                credit=credit,
+                balance_after=_parse_money(raw["Balance After(₦)"]),
+                channel=raw["Channel"].strip() or None,
+                bank_ref=raw["Transaction Reference"].strip(),
+                file_position=position,
+                file_hash=_row_hash(raw, position),
+            )
+        )
+    return rows
+
+
+def parse_bank_csv(path: Path | str, batch_id: int) -> list[BankRow]:
+    path = Path(path)
     with path.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f, delimiter="\t")
-        for position, raw in enumerate(reader, start=1):
-            credit = _parse_money(raw["Credit(₦)"])
-            if credit is None:
-                continue
+        return _parse_reader(reader, batch_id)
 
-            rows.append(
-                BankRow(
-                    trans_date=_parse_trans_date(raw["Trans. Date"]),
-                    value_date=_parse_value_date(raw["Value Date"]),
-                    description=raw["Description"].strip(),
-                    debit=_parse_money(raw["Debit(₦)"]),
-                    credit=credit,
-                    balance_after=_parse_money(raw["Balance After(₦)"]),
-                    channel=raw["Channel"].strip() or None,
-                    bank_ref=raw["Transaction Reference"].strip(),
-                    file_position=position,
-                    file_hash=_row_hash(raw, position),
-                )
-            )
 
-    return rows
+def parse_bank_csv_text(text: str, batch_id: int) -> list[BankRow]:
+    reader = csv.DictReader(io.StringIO(text), delimiter="\t")
+    return _parse_reader(reader, batch_id)

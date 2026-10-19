@@ -9,12 +9,12 @@ FIXTURE = Path(__file__).parent / "fixtures" / "bank_sample.csv"
 
 
 def test_only_credit_rows_returned():
-    rows = parse_bank_csv(FIXTURE)
+    rows = parse_bank_csv(FIXTURE, batch_id=1)
     assert len(rows) == 4
 
 
 def test_first_row_fields():
-    rows = parse_bank_csv(FIXTURE)
+    rows = parse_bank_csv(FIXTURE, batch_id=1)
     r = rows[0]
     assert r.credit == Decimal("320.00")
     assert r.debit is None
@@ -25,13 +25,13 @@ def test_first_row_fields():
 
 
 def test_identical_amounts_kept_separate():
-    rows = parse_bank_csv(FIXTURE)
+    rows = parse_bank_csv(FIXTURE, batch_id=1)
     fives = [r for r in rows if r.credit == Decimal("5000.00")]
     assert len(fives) == 2
     assert fives[0].file_hash != fives[1].file_hash
 
 
 def test_atm_debit_skipped():
-    rows = parse_bank_csv(FIXTURE)
+    rows = parse_bank_csv(FIXTURE, batch_id=1)
     assert all(r.credit > 0 for r in rows)
     assert not any("ATM WITHDRAWAL" in r.description for r in rows)
