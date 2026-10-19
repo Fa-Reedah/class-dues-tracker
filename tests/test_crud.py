@@ -150,3 +150,186 @@ def test_dues_period_rejects_non_positive_amount(client):
     assert r3.status_code == 201
 
 
+def test_payment_create_minimal(client):
+    client.post("/students", json={"name": "Ada", "matric": "M001"})
+    client.post(
+        "/dues_periods",
+        json={"name": "2026/27", "amount": "5000.00", "deadline": "2026-11-30"},
+    )
+    r = client.post(
+        "/payments",
+        json={
+            "student_id": 1,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+        },
+    )
+    assert r.status_code == 201
+    data = r.json()
+    assert data["status"] == "pending"
+    assert data["source"] == "manual"
+    assert data["matched_bank_row_id"] is None
+
+
+def test_payment_create_missing_student(client):
+    client.post(
+        "/dues_periods",
+        json={"name": "2026/27", "amount": "5000.00", "deadline": "2026-11-30"},
+    )
+    r = client.post(
+        "/payments",
+        json={
+            "student_id": 9999,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+        },
+    )
+    assert r.status_code == 400
+    assert "detail" in r.json()
+
+
+def test_payment_create_missing_dues_period(client):
+    client.post("/students", json={"name": "Ada", "matric": "M001"})
+    r = client.post(
+        "/payments",
+        json={
+            "student_id": 1,
+            "dues_period_id": 9999,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+        },
+    )
+    assert r.status_code == 400
+    assert "detail" in r.json()
+
+
+def test_payment_duplicate_rejected(client):
+    client.post("/students", json={"name": "Ada", "matric": "M001"})
+    client.post(
+        "/dues_periods",
+        json={"name": "2026/27", "amount": "5000.00", "deadline": "2026-11-30"},
+    )
+    payload = {
+        "student_id": 1,
+        "dues_period_id": 1,
+        "amount": "5000.00",
+        "date": "2026-10-20",
+        "ref": "TRF1",
+    }
+    r1 = client.post("/payments", json=payload)
+    assert r1.status_code == 201
+    r2 = client.post("/payments", json=payload)
+    assert r2.status_code == 409
+
+
+def test_payment_list_all(client):
+    client.post("/students", json={"name": "Ada", "matric": "M001"})
+    client.post(
+        "/dues_periods",
+        json={"name": "2026/27", "amount": "5000.00", "deadline": "2026-11-30"},
+    )
+    client.post(
+        "/payments",
+        json={
+            "student_id": 1,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+            "ref": "REF1",
+        },
+    )
+    client.post(
+        "/payments",
+        json={
+            "student_id": 1,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-21",
+            "ref": "REF2",
+        },
+    )
+    r = client.get("/payments")
+    assert r.status_code == 200
+    assert len(r.json()) == 2
+
+
+def test_payment_list_filter_by_student(client):
+    client.post("/students", json={"name": "Ada", "matric": "M001"})
+    client.post("/students", json={"name": "Chidi", "matric": "M002"})
+    client.post(
+        "/dues_periods",
+        json={"name": "2026/27", "amount": "5000.00", "deadline": "2026-11-30"},
+    )
+    client.post(
+        "/payments",
+        json={
+            "student_id": 1,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+            "ref": "REF1",
+        },
+    )
+    client.post(
+        "/payments",
+        json={
+            "student_id": 2,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+            "ref": "REF2",
+        },
+    )
+    r = client.get("/payments?student_id=1")
+    assert r.status_code == 200
+    assert len(r.json()) == 1
+    assert r.json()[0]["student_id"] == 1
+
+
+def test_payment_get_not_found(client):
+    r = client.get("/payments/9999")
+    assert r.status_code == 404
+
+
+def test_payment_patch_amount(client):
+    client.post("/students", json={"name": "Ada", "matric": "M001"})
+    client.post(
+        "/dues_periods",
+        json={"name": "2026/27", "amount": "5000.00", "deadline": "2026-11-30"},
+    )
+    client.post(
+        "/payments",
+        json={
+            "student_id": 1,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+        },
+    )
+    r = client.patch("/payments/1", json={"amount": "6000.00"})
+    assert r.status_code == 200
+    assert r.json()["amount"] == "6000.00"
+    assert r.json()["student_id"] == 1
+
+
+def test_payment_delete(client):
+    client.post("/students", json={"name": "Ada", "matric": "M001"})
+    client.post(
+        "/dues_periods",
+        json={"name": "2026/27", "amount": "5000.00", "deadline": "2026-11-30"},
+    )
+    client.post(
+        "/payments",
+        json={
+            "student_id": 1,
+            "dues_period_id": 1,
+            "amount": "5000.00",
+            "date": "2026-10-20",
+        },
+    )
+    assert client.delete("/payments/1").status_code == 204
+    assert client.get("/payments/1").status_code == 404
+
+

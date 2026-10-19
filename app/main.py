@@ -9,6 +9,7 @@ from sqlmodel import Session, func, select
 from app.db import get_session, init_db
 from app.models.bank_row import BankRow
 from app.models.dues_period import DuesPeriod, DuesPeriodCreate, DuesPeriodUpdate
+from app.models.payment import Payment, PaymentCreate, PaymentUpdate
 from app.models.student import Student, StudentUpdate
 
 
@@ -157,4 +158,85 @@ def delete_dues_period(period_id: int, session: Session = Depends(get_session)):
     if not period:
         raise HTTPException(status_code=404, detail="Dues period not found")
     session.delete(period)
+    session.commit()
+
+
+@app.post("/payments", response_model=Payment, status_code=201)
+def create_payment(payload: PaymentCreate, session: Session = Depends(get_session)):
+    student = session.get(Student, payload.student_id)
+    if not student:
+        raise HTTPException(status_code=400, detail="student_id not found")
+    period = session.get(DuesPeriod, payload.dues_period_id)
+    if not period:
+        raise HTTPException(status_code=400, detail="dues_period_id not found")
+
+    ref_condition = Payment.ref.is_(None) if payload.ref is None else Payment.ref == payload.ref
+    dup_query = select(Payment).where(
+        Payment.student_id == payload.student_id,
+        Payment.dues_period_id == payload.dues_period_id,
+        Payment.amount == payload.amount,
+        Payment.date == payload.date,
+        ref_condition,
+    )
+    if session.exec(dup_query).first():
+        raise HTTPException(
+            status_code=409,
+            detail="duplicate payment: same student, period, amount, date and ref already exists",
+        )
+
+    payment = Payment(**_as_dict(payload))
+    session.add(payment)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=400, detail="Integrity error creating payment")
+    session.refresh(payment)
+    return payment
+
+
+@app.get("/payments", response_model=list[Payment])
+def list_payments(
+    student_id: int | None = None,
+    dues_period_id: int | None = None,
+    status: str | None = None,
+    session: Session = Depends(get_session),
+):
+    query = select(Payment)
+    if student_id is not None:
+        query = query.where(Payment.student_id == student_id)
+    if dues_period_id is not None:
+        query = query.where(Payment.dues_period_id == dues_period_id)
+    if status is not None:
+        query = query.where(Payment.status == status)
+    return session.exec(query).all()
+
+
+@app.get("/payments/{payment_id}", response_model=Payment)
+def get_payment(payment_id: int, session: Session = Depends(get_session)):
+    payment = session.get(Payment, payment_id)
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    return payment
+
+
+@app.patch("/payments/{payment_id}", response_model=Payment)
+def update_payment(payment_id: int, payload: PaymentUpdate, session: Session = Depends(get_session)):
+    payment = session.get(Payment, payment_id)
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    for key, value in _as_dict(payload).items():
+        setattr(payment, key, value)
+    session.add(payment)
+    session.commit()
+    session.refresh(payment)
+    return payment
+
+
+@app.delete("/payments/{payment_id}", status_code=204)
+def delete_payment(payment_id: int, session: Session = Depends(get_session)):
+    payment = session.get(Payment, payment_id)
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    session.delete(payment)
     session.commit()
