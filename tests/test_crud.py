@@ -120,3 +120,12 @@ def test_dues_patch(client):
     assert r.status_code == 200
     assert r.json()["amount"] == "5000.00"
     assert r.json()["name"] == "P1"
+
+
+def test_student_duplicate_matric_returns_409(client):
+    r = client.post("/students", json={"name": "A", "matric": "M001"})
+    assert r.status_code == 201
+    r2 = client.post("/students", json={"name": "B", "matric": "M001"})
+    assert r2.status_code == 409
+    assert "detail" in r2.json()
+

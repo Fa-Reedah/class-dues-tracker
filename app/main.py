@@ -3,6 +3,7 @@ import io
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, func, select
 
 from app.db import get_session, init_db
@@ -43,7 +44,11 @@ def count_bank_rows(session: Session = Depends(get_session)):
 @app.post("/students", response_model=Student, status_code=201)
 def create_student(payload: Student, session: Session = Depends(get_session)):
     session.add(payload)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="matric or phone already exists")
     session.refresh(payload)
     return payload
 
